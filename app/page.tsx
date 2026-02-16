@@ -195,10 +195,22 @@ export default function GuanXinShu() {
 
   const handleGoogleLogin = async () => {
     const supabase = createClient();
+
+    // Determine the redirect URL: prefer env var, fallback to window.location.origin
+    const getRedirectUrl = () => {
+      let url = process.env.NEXT_PUBLIC_SITE_URL ??
+        (typeof window !== 'undefined' ? window.location.origin : '');
+
+      // Ensure standard clean URL
+      url = url.replace(/\/$/, ''); // Remove trailing slash if present
+
+      return `${url}/auth/callback`;
+    };
+
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: getRedirectUrl(),
         queryParams: {
           access_type: 'offline',
           prompt: 'select_account',
