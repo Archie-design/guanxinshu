@@ -17,9 +17,11 @@ import {
   Quote,
   X,
   LogOut,
-  Mail // Added Mail icon for Google
+  Mail, // Added Mail icon for Google
+  Check,
+  CheckSquare
 } from 'lucide-react';
-import { getJournalEntry, getRecordedDates, saveJournalEntry } from './actions';
+import { getJournalEntry, getRecordedDates, saveJournalEntry, getPendingTodos, toggleTodo } from './actions';
 import { createClient } from '@/utils/supabase/client';
 import { supabase } from '@/lib/supabase';
 
@@ -90,6 +92,15 @@ export default function GuanXinShu() {
     fetchHistory();
   }, []);
 
+  // Reload data when date changes
+  useEffect(() => {
+    if (currentDate) {
+      loadData(currentDate);
+    }
+  }, [currentDate]);
+
+  const [pendingTodos, setPendingTodos] = useState<Array<{ date: string; key: string; content: string }>>([]);
+
   // --- 資料存取邏輯 ---
   const fetchHistory = async () => {
     try {
@@ -100,13 +111,34 @@ export default function GuanXinShu() {
     }
   };
 
+  const fetchTodos = async () => {
+    const todos = await getPendingTodos();
+    setPendingTodos(todos);
+  };
+
+  useEffect(() => {
+    fetchTodos();
+  }, []); // Initial fetch
+
+  const handleTodoToggle = async (date: string, key: string, currentStatus: boolean) => {
+    // Optimistic update
+    setPendingTodos(prev => prev.filter(t => !(t.date === date && t.key === key)));
+
+    const result = await toggleTodo(date, key, !currentStatus);
+    if (!result.success) {
+      // Revert on failure (simplified: just refetch)
+      fetchTodos();
+      console.error("Failed to toggle todo");
+    }
+  };
+
   const loadData = async (date: string) => {
     setIsLoading(true);
     try {
+      // 1. Get Today's Data
       const data = await getJournalEntry(date);
       if (data) {
         setFormData(data as unknown as FormData);
-        // 智慧展開：如果該模組有內容則顯示
         const hasRoutine = data.routine_boxing || data.routine_wife;
         const hasGratitude = data.gratitude_1 || data.gratitude_2 || data.gratitude_3;
         setShowModules({ routine: !!hasRoutine, gratitude: !!hasGratitude });
@@ -114,6 +146,10 @@ export default function GuanXinShu() {
         setFormData({ logDate: date });
         setShowModules({ routine: false, gratitude: false });
       }
+
+      // 2. Refresh todos whenever we load data
+      fetchTodos();
+
     } catch (e) {
       console.error("Load data failed", e);
       setFormData({ logDate: date });
@@ -241,6 +277,41 @@ export default function GuanXinShu() {
           </button>
         </div>
       </header>
+
+      {/* 待辦行動清單 (跨日累計) */}
+      {pendingTodos.length > 0 && (
+        <div className="bg-amber-50 border-l-4 border-amber-400 p-6 rounded-r-2xl mb-10 shadow-sm animate-in slide-in-from-top-2">
+          <div className="flex items-center mb-4">
+            <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
+              <CheckSquare className="w-5 h-5 text-amber-600" />
+            </div>
+            <h3 className="font-black text-amber-800 text-lg">待辦行動 ({pendingTodos.length})</h3>
+          </div>
+          <div className="space-y-3">
+            {pendingTodos.map((todo) => (
+              <label
+                key={`${todo.date}-${todo.key}`}
+                className="flex items-start p-3 bg-white/60 rounded-xl cursor-pointer hover:bg-white transition-all group"
+              >
+                <div className="relative flex items-center mt-1 mr-3">
+                  <input
+                    type="checkbox"
+                    className="peer appearance-none w-5 h-5 border-2 border-amber-300 rounded-md checked:bg-amber-500 checked:border-amber-500 transition-all"
+                    onChange={() => handleTodoToggle(todo.date, todo.key, false)}
+                  />
+                  <Check className="w-3.5 h-3.5 text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100 pointer-events-none" />
+                </div>
+                <div>
+                  <span className="text-amber-900 font-bold block">{todo.content}</span>
+                  <span className="text-[10px] text-amber-600/60 font-medium bg-amber-100/50 px-2 py-0.5 rounded-full mt-1 inline-block">
+                    {todo.date}
+                  </span>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 格言區 */}
       <div className="bg-indigo-50/50 p-8 rounded-[2rem] text-center mb-10 relative">
