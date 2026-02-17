@@ -19,10 +19,11 @@ import {
   LogOut,
   CheckCircle2,
   Database,
-  Info
+  Info,
+  Check,
+  CheckSquare
 } from 'lucide-react';
 
-// 使用 ESM CDN 導入 Supabase 以解決環境路徑解析問題
 import { createClient } from '@supabase/supabase-js';
 
 // --- 常數定義 ---
@@ -58,6 +59,7 @@ export default function Guanxinshu() {
   const [isLoading, setIsLoading] = useState(false);
   const [showModules, setShowModules] = useState({ routine: false, gratitude: false });
   const [calendarView, setCalendarView] = useState(new Date());
+  const [pendingTodos, setPendingTodos] = useState<Array<{ date: string; key: string; content: string; done: boolean }>>([]);
 
   // --- 初始化與 Session 監聽 ---
   useEffect(() => {
@@ -67,13 +69,17 @@ export default function Guanxinshu() {
       if (session?.user) {
         fetchHistory(supabase);
         loadData(supabase, currentDate);
+        fetchTodos(supabase);
       }
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
 
   useEffect(() => {
-    if (user) loadData(supabase, currentDate);
+    if (user) {
+      loadData(supabase, currentDate);
+      fetchTodos(supabase);
+    }
   }, [currentDate, supabase, user]);
 
   // --- 資料操作邏輯 ---
@@ -81,6 +87,48 @@ export default function Guanxinshu() {
     try {
       const { data, error } = await client.from('logs').select('id');
       if (!error && data) setRecordedDates(new Set(data.map((i: any) => i.id)));
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchTodos = async (client: any) => {
+    try {
+      const { data, error } = await client
+        .from('logs')
+        .select('id, content, updated_at')
+        .order('id', { ascending: false })
+        .limit(14);
+
+      if (error || !data) return;
+
+      const todos: Array<{ date: string; key: string; content: string; done: boolean }> = [];
+      const todoKeys = [
+        'love_body_todo', 'love_speech_todo', 'love_mind_todo',
+        'steady_body_todo', 'steady_speech_todo', 'steady_mind_todo'
+      ];
+
+      const now = new Date().getTime();
+      const threeDays = 3 * 24 * 60 * 60 * 1000;
+
+      data.forEach((row: any) => {
+        const content = row.content || {};
+        const rowUpdatedAt = new Date(row.updated_at).getTime();
+
+        todoKeys.forEach(key => {
+          if (content[key]) {
+            const isDone = !!content[`${key}_done`];
+            // 顯示條件：未完成 OR (已完成且更新時間在3天內)
+            if (!isDone || (now - rowUpdatedAt < threeDays)) {
+              todos.push({
+                date: row.id,
+                key: key,
+                content: content[key],
+                done: isDone
+              });
+            }
+          }
+        });
+      });
+      setPendingTodos(todos);
     } catch (e) { console.error(e); }
   };
 
@@ -115,8 +163,31 @@ export default function Guanxinshu() {
       if (error) throw error;
       alert('紀錄已安全存檔 🌱');
       fetchHistory(supabase);
+      fetchTodos(supabase); // Refresh todos after save
     } catch (e) { alert('儲存失敗，請檢查資料庫權限設定'); }
     finally { setIsLoading(false); }
+  };
+
+  const handleTodoToggle = async (date: string, key: string, currentStatus: boolean) => {
+    // Optimistic update
+    setPendingTodos(prev => prev.map(t =>
+      (t.date === date && t.key === key) ? { ...t, done: !currentStatus } : t
+    ));
+
+    try {
+      const { data } = await supabase.from('logs').select('content').eq('id', date).single();
+      if (data) {
+        const newContent = { ...data.content, [`${key}_done`]: !currentStatus };
+        await supabase.from('logs').update({
+          content: newContent,
+          updated_at: new Date().toISOString()
+        }).eq('id', date);
+        fetchTodos(supabase); // Re-fetch to confirm
+      }
+    } catch (e) {
+      console.error("Toggle failed", e);
+      fetchTodos(supabase); // Revert
+    }
   };
 
   const handleInputChange = (key: string, val: string) => {
@@ -135,6 +206,60 @@ export default function Guanxinshu() {
       options: { redirectTo: window.location.origin }
     });
     if (error) alert(error.message);
+  };
+
+  const handleCopy = async () => {
+    const lines = [`📅 觀心書 ${currentDate}\n`];
+
+    // 定課
+    if (formData.routine_boxing || formData.routine_wife) {
+      lines.push('【定課執行】');
+      if (formData.routine_boxing) lines.push(`🥊 破曉打陰陽拳：${formData.routine_boxing}`);
+      if (formData.routine_wife) lines.push(`👩‍❤️‍👨 欣賞老婆：${formData.routine_wife}`);
+      lines.push('');
+    }
+
+    // 感恩
+    const gratitudes = [1, 2, 3, 4, 5].map(i => formData[`gratitude_${i}`]).filter(Boolean);
+    if (gratitudes.length > 0) {
+      lines.push('【五感恩】');
+      gratitudes.forEach((g, i) => lines.push(`${i + 1}. ${g}`));
+      lines.push('');
+    }
+
+    // 身語意
+    THEMES.forEach(theme => {
+      let hasThemeContent = false;
+      const themeLines = [`【${theme.title}】`];
+
+      SUB_FIELDS.forEach(field => {
+        const plus = formData[`${theme.id}_${field.id}_plus`];
+        const minus = formData[`${theme.id}_${field.id}_minus`];
+        const todo = formData[`${theme.id}_${field.id}_todo`];
+
+        if (plus || minus || todo) {
+          hasThemeContent = true;
+          themeLines.push(`${field.title} (${field.label})`);
+          if (plus) themeLines.push(`  + ${plus}`);
+          if (minus) themeLines.push(`  - ${minus}`);
+          if (todo) themeLines.push(`  🎯 ${todo}`);
+        }
+      });
+
+      if (hasThemeContent) {
+        lines.push(...themeLines);
+        lines.push('');
+      }
+    });
+
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('已複製到剪貼簿！📋');
+    } catch (err) {
+      console.error('複製失敗:', err);
+      alert('複製失敗，請手動複製');
+    }
   };
 
   // --- 輔助計算 ---
@@ -169,17 +294,74 @@ export default function Guanxinshu() {
             {currentDate}
           </div>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 flex-shrink-0">
           {user && (
-            <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-rose-500 transition-colors">
-              <LogOut className="w-5 h-5" />
-            </button>
+            <div className="flex items-center bg-slate-50 rounded-full pl-3 pr-1 py-1 border border-slate-100 shadow-sm max-w-[140px] xs:max-w-none">
+              <span className="text-[10px] font-bold text-slate-500 mr-2 truncate">
+                {user.email?.split('@')[0] || 'User'}
+              </span>
+              <button onClick={handleLogout} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-rose-500 shadow-sm transition-colors border border-slate-50 flex-shrink-0">
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
         </div>
       </header>
 
       {/* 內容主區塊 */}
       <main className="px-5 pt-6 space-y-6">
+
+        {/* 登入引導 (若未登入) - 改置於最上方 */}
+        {!user && (
+          <div className="bg-indigo-50 border-2 border-indigo-100 border-dashed rounded-[2.5rem] p-8 text-center animate-in fade-in duration-700">
+            <UserIcon className="w-10 h-10 text-indigo-300 mx-auto mb-4" />
+            <h4 className="font-black text-indigo-900 mb-2">同步您的覺察紀錄</h4>
+            <p className="text-indigo-600/70 text-xs mb-6 px-4">完成設定並登入 Google，即可在不同裝置間同步您的觀心紀錄。</p>
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center active:scale-95 transition-all"
+            >
+              <img src="https://www.google.com/favicon.ico" className="w-4 h-4 mr-3" alt="Google" />
+              使用 Google 帳號登入
+            </button>
+          </div>
+        )}
+
+        {/* 視覺吸引力：格言卡片 */}
+        {pendingTodos.length > 0 && (
+          <div className="bg-amber-50 border-l-4 border-amber-400 p-6 rounded-2xl shadow-sm animate-in slide-in-from-top-2">
+            <div className="flex items-center mb-4">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
+                <CheckSquare className="w-5 h-5 text-amber-600" />
+              </div>
+              <h3 className="font-black text-amber-800 text-lg">待辦行動 ({pendingTodos.length})</h3>
+            </div>
+            <div className="space-y-3">
+              {pendingTodos.map((todo) => (
+                <label
+                  key={`${todo.date}-${todo.key}`}
+                  className={`flex items-start p-3 rounded-xl cursor-pointer transition-all group ${todo.done ? 'bg-slate-100/50 grayscale opacity-70' : 'bg-white/60 hover:bg-white'}`}
+                >
+                  <div className="relative flex items-center mt-1 mr-3">
+                    <input
+                      type="checkbox"
+                      className="peer appearance-none w-5 h-5 border-2 border-amber-300 rounded-md checked:bg-amber-500 checked:border-amber-500 transition-all"
+                      checked={todo.done}
+                      onChange={() => handleTodoToggle(todo.date, todo.key, todo.done)}
+                    />
+                    <Check className="w-3.5 h-3.5 text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100 pointer-events-none" />
+                  </div>
+                  <div>
+                    <span className={`text-amber-900 font-bold block ${todo.done ? 'line-through text-slate-400' : ''}`}>{todo.content}</span>
+                    <span className="text-[10px] text-amber-600/60 font-medium bg-amber-100/50 px-2 py-0.5 rounded-full mt-1 inline-block">
+                      {todo.date}
+                    </span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 視覺吸引力：格言卡片 */}
         <div className="relative p-7 rounded-[2.5rem] bg-indigo-600 shadow-xl shadow-indigo-100 overflow-hidden group">
@@ -236,22 +418,6 @@ export default function Guanxinshu() {
             <Heart className="w-3.5 h-3.5 mr-2" /> 感恩
           </button>
         </div>
-
-        {/* 登入引導 (若未登入) */}
-        {!user && (
-          <div className="bg-indigo-50 border-2 border-indigo-100 border-dashed rounded-[2.5rem] p-8 text-center animate-in fade-in duration-700">
-            <UserIcon className="w-10 h-10 text-indigo-300 mx-auto mb-4" />
-            <h4 className="font-black text-indigo-900 mb-2">同步您的覺察紀錄</h4>
-            <p className="text-indigo-600/70 text-xs mb-6 px-4">完成設定並登入 Google，即可在不同裝置間同步您的觀心紀錄。</p>
-            <button
-              onClick={handleGoogleLogin}
-              className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center active:scale-95 transition-all"
-            >
-              <img src="https://www.google.com/favicon.ico" className="w-4 h-4 mr-3" alt="Google" />
-              使用 Google 帳號登入
-            </button>
-          </div>
-        )}
 
         {/* 表單內容區 */}
         <div className={`space-y-8 ${!user ? 'opacity-40 pointer-events-none grayscale-[0.5]' : ''}`}>
@@ -319,8 +485,8 @@ export default function Guanxinshu() {
                 {SUB_FIELDS.map(field => (
                   <div key={field.id} className="space-y-4">
                     <div className="flex justify-between items-center border-b border-slate-50 pb-2 px-1">
-                      <span className={`flex items-center text-${theme.color === 'emerald' ? 'emerald' : 'blue'}-600 font-black text-xs uppercase tracking-widest`}>
-                        {React.cloneElement(field.icon as React.ReactElement<any>, { className: 'mr-2.5 w-4 h-4' })}
+                      <span className={`flex items-center text-${theme.color === 'emerald' ? 'emerald' : 'blue'}-600 font-black text-lg uppercase tracking-widest`}>
+                        {React.cloneElement(field.icon as React.ReactElement<any>, { className: 'mr-2.5 w-5 h-5' })}
                         {field.title}
                       </span>
                       <span className="text-[9px] font-bold text-slate-200 uppercase tracking-tighter">{field.label}</span>
@@ -365,7 +531,7 @@ export default function Guanxinshu() {
         <div className="max-w-md mx-auto flex gap-4">
           <button
             type="button"
-            onClick={() => {/* 複製邏輯 */ alert('功能開發中') }}
+            onClick={handleCopy}
             className="p-5 bg-slate-50 text-slate-400 rounded-[1.75rem] active:bg-indigo-50 active:text-indigo-600 transition-all shadow-sm border border-slate-100"
           >
             <Copy className="w-6 h-6" />
