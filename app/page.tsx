@@ -12,220 +12,144 @@ import {
   Settings,
   Brain,
   MessageSquare,
-  User,
+  User as UserIcon,
   Save,
   Quote,
   X,
   LogOut,
-  Mail, // Added Mail icon for Google
-  Check,
-  CheckSquare
+  CheckCircle2,
+  Database,
+  Info
 } from 'lucide-react';
-import { getJournalEntry, getRecordedDates, saveJournalEntry, getPendingTodos, toggleTodo } from './actions';
-import { createClient } from '@/utils/supabase/client';
-import { supabase } from '@/lib/supabase';
 
-// --- 配置與常數 ---
+// 使用 ESM CDN 導入 Supabase 以解決環境路徑解析問題
+import { createClient } from '@supabase/supabase-js';
+
+// --- 常數定義 ---
 const QUOTES = [
   "「覺察，是改變的開始。」",
   "「定於心，穩於行，觀於意。」",
   "「每一口呼吸都是與靈魂的重新連結。」",
   "「心若安定，世界便不再嘈雜。」",
-  "「溫柔對待今日的疲憊，也是一種勇氣。」",
-  "「在覺察中，看見真實的自己。」"
+  "「溫柔對待今日的疲憊，也是一種勇氣。」"
 ];
 
 const THEMES = [
-  {
-    id: 'love',
-    title: '付出愛',
-    color: 'emerald',
-    icon: <Heart className="w-5 h-5" />,
-    label: 'Love & Compassion'
-  },
-  {
-    id: 'steady',
-    title: '穩',
-    color: 'blue',
-    icon: <ShieldCheck className="w-5 h-5" />,
-    label: 'Stability & Mind'
-  }
+  { id: 'love', title: '付出愛', color: 'emerald', icon: <Heart className="w-5 h-5" />, label: 'Love' },
+  { id: 'steady', title: '穩', color: 'blue', icon: <ShieldCheck className="w-5 h-5" />, label: 'Stability' }
 ];
 
 const SUB_FIELDS = [
-  { id: 'body', title: '身', label: 'Physical Body', icon: <User className="w-4 h-4" /> },
-  { id: 'speech', title: '語', label: 'Speech & Word', icon: <MessageSquare className="w-4 h-4" /> },
-  { id: 'mind', title: '意', label: 'Mind & Intention', icon: <Brain className="w-4 h-4" /> }
+  { id: 'body', title: '身', label: 'Body', icon: <UserIcon className="w-4 h-4" /> },
+  { id: 'speech', title: '語', label: 'Speech', icon: <MessageSquare className="w-4 h-4" /> },
+  { id: 'mind', title: '意', label: 'Mind', icon: <Brain className="w-4 h-4" /> }
 ];
 
-interface FormData {
-  [key: string]: string;
-}
-
-interface ShowModules {
-  routine: boolean;
-  gratitude: boolean;
-}
-
-export default function GuanXinShu() {
+export default function Guanxinshu() {
   // --- 狀態管理 ---
-  const [apiUrl, setApiUrl] = useState('');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [currentDate, setCurrentDate] = useState('');
-  const [formData, setFormData] = useState<FormData>({});
-  const [recordedDates, setRecordedDates] = useState<Set<string>>(new Set());
+  const [supabase] = useState(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ));
+  const [user, setUser] = useState<any>(null);
+  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formData, setFormData] = useState<any>({});
+  const [recordedDates, setRecordedDates] = useState(new Set());
   const [isLoading, setIsLoading] = useState(false);
-  const [showModules, setShowModules] = useState<ShowModules>({ routine: false, gratitude: false });
-  const [calendarView, setCalendarView] = useState<Date | null>(null);
+  const [showModules, setShowModules] = useState({ routine: false, gratitude: false });
+  const [calendarView, setCalendarView] = useState(new Date());
 
-  // --- 初始化 ---
+  // --- 初始化與 Session 監聽 ---
   useEffect(() => {
-    // Client-side only initialization
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    // 監聽 Auth 狀態
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        fetchHistory(supabase);
+        loadData(supabase, currentDate);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [supabase]);
 
-    // Set state
-    setCurrentDate(todayStr);
-    setCalendarView(today);
-
-    // Initial fetch
-    fetchHistory();
-  }, []);
-
-  // Reload data when date changes
   useEffect(() => {
-    if (currentDate) {
-      loadData(currentDate);
-    }
-  }, [currentDate]);
+    if (user) loadData(supabase, currentDate);
+  }, [currentDate, supabase, user]);
 
-  const [pendingTodos, setPendingTodos] = useState<Array<{ date: string; key: string; content: string }>>([]);
-
-  // --- 資料存取邏輯 ---
-  const fetchHistory = async () => {
+  // --- 資料操作邏輯 ---
+  const fetchHistory = async (client: any) => {
     try {
-      const dates = await getRecordedDates();
-      setRecordedDates(new Set(dates));
-    } catch (e) {
-      console.error("History fetch failed", e);
-    }
+      const { data, error } = await client.from('logs').select('id');
+      if (!error && data) setRecordedDates(new Set(data.map((i: any) => i.id)));
+    } catch (e) { console.error(e); }
   };
 
-  const fetchTodos = async () => {
-    const todos = await getPendingTodos();
-    setPendingTodos(todos);
-  };
-
-  useEffect(() => {
-    fetchTodos();
-  }, []); // Initial fetch
-
-  const handleTodoToggle = async (date: string, key: string, currentStatus: boolean) => {
-    // Optimistic update
-    setPendingTodos(prev => prev.filter(t => !(t.date === date && t.key === key)));
-
-    const result = await toggleTodo(date, key, !currentStatus);
-    if (!result.success) {
-      // Revert on failure (simplified: just refetch)
-      fetchTodos();
-      console.error("Failed to toggle todo");
-    }
-  };
-
-  const loadData = async (date: string) => {
+  const loadData = async (client: any, date: string) => {
     setIsLoading(true);
     try {
-      // 1. Get Today's Data
-      const data = await getJournalEntry(date);
+      const { data, error } = await client.from('logs').select('content').eq('id', date).single();
       if (data) {
-        setFormData(data as unknown as FormData);
-        const hasRoutine = data.routine_boxing || data.routine_wife;
-        const hasGratitude = data.gratitude_1 || data.gratitude_2 || data.gratitude_3;
-        setShowModules({ routine: !!hasRoutine, gratitude: !!hasGratitude });
+        setFormData(data.content);
+        setShowModules({
+          routine: !!(data.content.routine_boxing || data.content.routine_wife),
+          gratitude: !!(data.content.gratitude_1 || data.content.gratitude_2)
+        });
       } else {
         setFormData({ logDate: date });
         setShowModules({ routine: false, gratitude: false });
       }
-
-      // 2. Refresh todos whenever we load data
-      fetchTodos();
-
-    } catch (e) {
-      console.error("Load data failed", e);
-      setFormData({ logDate: date });
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (e) { setFormData({ logDate: date }); }
+    finally { setIsLoading(false); }
   };
 
   const handleSave = async () => {
+    if (!user) return alert("請先登入");
     setIsLoading(true);
     try {
-      const result = await saveJournalEntry(currentDate, formData);
-      if (result && result.success) {
-        alert('觀心紀錄已儲存 🌱');
-        fetchHistory();
-      } else {
-        const errorMessage = result?.error || 'Unknown error';
-        console.error('Save error:', errorMessage);
-        alert(`儲存失敗: ${errorMessage}`);
-      }
-    } catch (e: any) {
-      console.error("Save failed", e);
-      alert(`儲存失敗: ${e.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+      const { error } = await supabase.from('logs').upsert({
+        id: currentDate,
+        content: formData,
+        user_id: user.id,
+        updated_at: new Date().toISOString()
+      });
+      if (error) throw error;
+      alert('紀錄已安全存檔 🌱');
+      fetchHistory(supabase);
+    } catch (e) { alert('儲存失敗，請檢查資料庫權限設定'); }
+    finally { setIsLoading(false); }
   };
 
-  // --- UI 組件與輔助函數 ---
-  // Move quote selection to useEffect to avoid hydration mismatch
+  const handleInputChange = (key: string, val: string) => {
+    setFormData((prev: any) => ({ ...prev, [key]: val }));
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    location.reload();
+  };
+
+  const handleGoogleLogin = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin }
+    });
+    if (error) alert(error.message);
+  };
+
+  // --- 輔助計算 ---
   const [quote, setQuote] = useState('');
-  const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
     setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
-
-    // Check session
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
   }, []);
 
-  const handleGoogleLogin = async () => {
-    const supabase = createClient();
-
-    // Determine the redirect URL: prefer env var, fallback to window.location.origin
-    const getRedirectUrl = () => {
-      let url = process.env.NEXT_PUBLIC_SITE_URL ??
-        (typeof window !== 'undefined' ? window.location.origin : '');
-
-      // Ensure standard clean URL
-      url = url.replace(/\/$/, ''); // Remove trailing slash if present
-
-      return `${url}/auth/callback`;
-    };
-
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: getRedirectUrl(),
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'select_account',
-        },
-      }
-    });
-  };
-
   const calendarDays = useMemo(() => {
-    if (!calendarView) return [];
     const year = calendarView.getFullYear();
     const month = calendarView.getMonth();
     const firstDay = new Date(year, month, 1).getDay();
     const totalDays = new Date(year, month + 1, 0).getDate();
-    const days: (string | null)[] = [];
+    const days = [];
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let d = 1; d <= totalDays; d++) {
       days.push(`${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
@@ -233,286 +157,229 @@ export default function GuanXinShu() {
     return days;
   }, [calendarView]);
 
-  const handleInputChange = (key: string, val: string) => {
-    setFormData(prev => ({ ...prev, [key]: val }));
-  };
-
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    setUser(null);
-    setFormData({});
-    setRecordedDates(new Set());
-  };
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#FDFBF7] flex flex-col items-center justify-center p-6 text-center">
-        <h1 className="text-4xl font-black text-slate-800 mb-2 tracking-tight">觀心書</h1>
-        <p className="text-slate-500 mb-10 font-medium tracking-wide">每日覺察，安頓身心</p>
-        <button
-          onClick={handleGoogleLogin}
-          className="bg-[#4285F4] text-white px-10 py-4 rounded-2xl font-bold flex items-center space-x-3 hover:bg-[#357ae8] transition-all shadow-xl active:scale-95"
-        >
-          <Mail className="w-6 h-6 fill-current" />
-          <span className="text-lg">使用 Google 帳號登入</span>
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-2xl mx-auto px-4 py-10">
-      {/* 載入狀態 */}
-      {isLoading && (
-        <div className="fixed inset-0 bg-white/60 backdrop-blur-sm z-[100] flex items-center justify-center">
-          <Zap className="w-10 h-10 text-indigo-600 animate-bounce" />
-        </div>
-      )}
+    <div className="max-w-2xl mx-auto min-h-screen bg-[#f8fafc] text-slate-900 pb-32 font-sans overflow-x-hidden">
 
-      {/* Header */}
-      <header className="flex justify-between items-start mb-10">
-        <div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tighter">觀心書</h1>
-          <p className="text-slate-400 font-bold mt-2 flex items-center">
-            <CalendarIcon className="w-4 h-4 mr-2" /> {currentDate}
-          </p>
+      {/* 行動裝置優化 Header */}
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100 px-5 py-4 flex justify-between items-center shadow-sm">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-black tracking-tight text-slate-800">觀心書</h1>
+          <div className="flex items-center text-[10px] text-indigo-500 font-bold uppercase tracking-widest mt-0.5">
+            <CalendarIcon className="w-3 h-3 mr-1" />
+            {currentDate}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {user.email && <span className="text-[10px] font-bold text-slate-300 uppercase hidden sm:block">{user.email.split('@')[0]}</span>}
-          <button
-            onClick={handleSignOut}
-            className="p-3 bg-white rounded-2xl shadow-sm text-slate-400 hover:text-rose-500 hover:scale-105 active:scale-95 transition-all"
-            title="登出"
-          >
-            <LogOut className="w-6 h-6" />
-          </button>
+        <div className="flex items-center space-x-2">
+          {user && (
+            <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-rose-500 transition-colors">
+              <LogOut className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
 
-      {/* 待辦行動清單 (跨日累計) */}
-      {pendingTodos.length > 0 && (
-        <div className="bg-amber-50 border-l-4 border-amber-400 p-6 rounded-r-2xl mb-10 shadow-sm animate-in slide-in-from-top-2">
-          <div className="flex items-center mb-4">
-            <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
-              <CheckSquare className="w-5 h-5 text-amber-600" />
+      {/* 內容主區塊 */}
+      <main className="px-5 pt-6 space-y-6">
+
+        {/* 視覺吸引力：格言卡片 */}
+        <div className="relative p-7 rounded-[2.5rem] bg-indigo-600 shadow-xl shadow-indigo-100 overflow-hidden group">
+          <Quote className="absolute -top-4 -left-4 w-24 h-24 text-white/10 group-hover:rotate-12 transition-transform duration-700" />
+          <p className="text-white font-medium italic relative z-10 leading-relaxed text-center text-sm">
+            {quote}
+          </p>
+        </div>
+
+        {/* 手機優化日曆：大觸控熱區 */}
+        <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
+          <div className="flex justify-between items-center mb-6 px-1">
+            <h3 className="font-black text-slate-800 flex items-center">
+              {calendarView.getFullYear()}年 {calendarView.getMonth() + 1}月
+            </h3>
+            <div className="flex bg-slate-50 rounded-xl p-1 border border-slate-100">
+              <button onClick={() => setCalendarView(new Date(calendarView.getFullYear(), calendarView.getMonth() - 1, 1))} className="p-2 text-slate-400 active:text-indigo-600 transition-colors"><ChevronLeft className="w-5 h-5" /></button>
+              <button onClick={() => setCalendarView(new Date(calendarView.getFullYear(), calendarView.getMonth() + 1, 1))} className="p-2 text-slate-400 active:text-indigo-600 transition-colors"><ChevronRight className="w-5 h-5" /></button>
             </div>
-            <h3 className="font-black text-amber-800 text-lg">待辦行動 ({pendingTodos.length})</h3>
           </div>
-          <div className="space-y-3">
-            {pendingTodos.map((todo) => (
-              <label
-                key={`${todo.date}-${todo.key}`}
-                className="flex items-start p-3 bg-white/60 rounded-xl cursor-pointer hover:bg-white transition-all group"
+          <div className="grid grid-cols-7 gap-2">
+            {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-[10px] font-black text-slate-300 text-center py-1 tracking-widest uppercase">{d}</div>)}
+            {calendarDays.map((dateStr, i) => dateStr ? (
+              <button
+                key={i}
+                onClick={() => setCurrentDate(dateStr)}
+                className={`aspect-square flex flex-col items-center justify-center rounded-2xl transition-all text-sm font-bold relative
+                  ${currentDate === dateStr ? 'bg-indigo-600 text-white shadow-lg scale-105 z-10' : 'bg-slate-50/50 text-slate-500 active:bg-slate-100'}
+                `}
               >
-                <div className="relative flex items-center mt-1 mr-3">
-                  <input
-                    type="checkbox"
-                    className="peer appearance-none w-5 h-5 border-2 border-amber-300 rounded-md checked:bg-amber-500 checked:border-amber-500 transition-all"
-                    onChange={() => handleTodoToggle(todo.date, todo.key, false)}
-                  />
-                  <Check className="w-3.5 h-3.5 text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100 pointer-events-none" />
-                </div>
-                <div>
-                  <span className="text-amber-900 font-bold block">{todo.content}</span>
-                  <span className="text-[10px] text-amber-600/60 font-medium bg-amber-100/50 px-2 py-0.5 rounded-full mt-1 inline-block">
-                    {todo.date}
-                  </span>
-                </div>
-              </label>
-            ))}
+                {dateStr.split('-')[2]}
+                {recordedDates.has(dateStr) && currentDate !== dateStr && <div className="absolute bottom-1.5 w-1.5 h-1.5 bg-indigo-400 rounded-full" />}
+              </button>
+            ) : <div key={i} />)}
           </div>
+        </section>
+
+        {/* 模組切換：手機專用 Segmented Control */}
+        <div className="flex p-1.5 bg-slate-200/50 rounded-2xl space-x-1 backdrop-blur-sm">
+          <button
+            onClick={() => setShowModules(p => ({ ...p, routine: !p.routine }))}
+            className={`flex-1 py-3 rounded-xl text-xs font-black transition-all flex items-center justify-center
+              ${showModules.routine ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}
+            `}
+          >
+            <Zap className="w-3.5 h-3.5 mr-2" /> 定課
+          </button>
+          <button
+            onClick={() => setShowModules(p => ({ ...p, gratitude: !p.gratitude }))}
+            className={`flex-1 py-3 rounded-xl text-xs font-black transition-all flex items-center justify-center
+              ${showModules.gratitude ? 'bg-white text-pink-600 shadow-sm' : 'text-slate-400'}
+            `}
+          >
+            <Heart className="w-3.5 h-3.5 mr-2" /> 感恩
+          </button>
         </div>
-      )}
 
-      {/* 格言區 */}
-      <div className="bg-indigo-50/50 p-8 rounded-[2rem] text-center mb-10 relative">
-        <Quote className="absolute top-4 left-6 w-8 h-8 text-indigo-100" />
-        <p className="italic text-indigo-900 font-medium leading-relaxed">{quote}</p>
-      </div>
-
-      {/* 日曆切換器 */}
-      <section className="bg-white p-6 rounded-[2rem] border mb-10">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="font-black text-slate-800">
-            {calendarView ? `${calendarView.getFullYear()}年 ${calendarView.getMonth() + 1}月` : '載入中...'}
-          </h3>
-          <div className="flex space-x-2">
+        {/* 登入引導 (若未登入) */}
+        {!user && (
+          <div className="bg-indigo-50 border-2 border-indigo-100 border-dashed rounded-[2.5rem] p-8 text-center animate-in fade-in duration-700">
+            <UserIcon className="w-10 h-10 text-indigo-300 mx-auto mb-4" />
+            <h4 className="font-black text-indigo-900 mb-2">同步您的覺察紀錄</h4>
+            <p className="text-indigo-600/70 text-xs mb-6 px-4">完成設定並登入 Google，即可在不同裝置間同步您的觀心紀錄。</p>
             <button
-              onClick={() => calendarView && setCalendarView(new Date(calendarView.getFullYear(), calendarView.getMonth() - 1, 1))}
-              className="p-2 hover:bg-slate-100 rounded-lg"
-              disabled={!calendarView}
+              onClick={handleGoogleLogin}
+              className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center active:scale-95 transition-all"
             >
-              <ChevronLeft />
-            </button>
-            <button
-              onClick={() => calendarView && setCalendarView(new Date(calendarView.getFullYear(), calendarView.getMonth() + 1, 1))}
-              className="p-2 hover:bg-slate-100 rounded-lg"
-              disabled={!calendarView}
-            >
-              <ChevronRight />
+              <img src="https://www.google.com/favicon.ico" className="w-4 h-4 mr-3" alt="Google" />
+              使用 Google 帳號登入
             </button>
           </div>
-        </div>
-        <div className="grid grid-cols-7 gap-2 text-center">
-          {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-[10px] font-black text-slate-300 uppercase">{d}</div>)}
-          {calendarDays.map((dateStr, i) => dateStr ? (
-            <div
-              key={i}
-              onClick={() => setCurrentDate(dateStr)}
-              className={`aspect-square flex flex-col items-center justify-center rounded-2xl cursor-pointer transition-all text-sm font-bold relative
-                ${currentDate === dateStr ? 'bg-indigo-600 text-white shadow-lg scale-110 z-10' : 'hover:bg-indigo-50 text-slate-600'}
-              `}
-            >
-              {dateStr.split('-')[2]}
-              {recordedDates.has(dateStr) && currentDate !== dateStr && <div className="absolute bottom-1.5 w-1 h-1 bg-indigo-400 rounded-full" />}
-            </div>
-          ) : <div key={i} />)}
-        </div>
-      </section>
-
-      {/* 功能切換 */}
-      <div className="flex gap-4 mb-10 overflow-x-auto no-scrollbar">
-        <button
-          onClick={() => setShowModules(p => ({ ...p, routine: !p.routine }))}
-          className={`px-6 py-3 rounded-2xl text-sm font-black transition-all border ${showModules.routine ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white text-slate-500'}`}
-        >
-          定課模組
-        </button>
-        <button
-          onClick={() => setShowModules(p => ({ ...p, gratitude: !p.gratitude }))}
-          className={`px-6 py-3 rounded-2xl text-sm font-black transition-all border ${showModules.gratitude ? 'bg-pink-50 border-pink-200 text-pink-600' : 'bg-white text-slate-500'}`}
-        >
-          五感恩
-        </button>
-      </div>
-
-      <form className="space-y-10">
-        {/* 定課 */}
-        {showModules.routine && (
-          <div className="bg-white p-8 rounded-[2rem] border-l-[8px] border-indigo-500 shadow-sm transition-all animate-in fade-in slide-in-from-top-4">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-indigo-900">定課執行</h2>
-              <span className="text-[10px] font-black text-indigo-200 tracking-[0.3em]">DAILY DISCIPLINE</span>
-            </div>
-            <div className="space-y-6">
-              <textarea
-                placeholder="破曉打陰陽拳的覺受..."
-                value={formData.routine_boxing || ''}
-                onChange={e => handleInputChange('routine_boxing', e.target.value)}
-                className="w-full p-5 bg-slate-50 border-none rounded-2xl outline-none text-sm min-h-[80px]"
-              />
-              <textarea
-                placeholder="欣賞老婆的閃光點..."
-                value={formData.routine_wife || ''}
-                onChange={e => handleInputChange('routine_wife', e.target.value)}
-                className="w-full p-5 bg-slate-50 border-none rounded-2xl outline-none text-sm min-h-[80px]"
-              />
-            </div>
-          </div>
         )}
-        {/* 五感恩 */}
-        {showModules.gratitude && (
-          <div className="bg-white p-8 rounded-[2rem] border-l-[8px] border-pink-500 shadow-sm transition-all animate-in fade-in slide-in-from-top-4">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-pink-900">五感恩</h2>
-              <span className="text-[10px] font-black text-pink-200 tracking-[0.3em]">GRATITUDE</span>
-            </div>
-            <div className="space-y-4">
-              {[1, 2, 3, 4, 5].map(i => (
-                <input
-                  key={i}
-                  type="text"
-                  placeholder={`感恩事項 ${i}...`}
-                  value={formData[`gratitude_${i}`] || ''}
-                  onChange={e => handleInputChange(`gratitude_${i}`, e.target.value)}
-                  className="w-full p-4 bg-pink-50/50 rounded-xl outline-none text-sm border border-transparent focus:border-pink-200"
-                />
-              ))}
-            </div>
-          </div>
-        )}
-        {/* 核心內容：付出愛、穩 (均包含身語意) */}
-        {THEMES.map(theme => (
-          <section key={theme.id} className={`bg-white p-8 rounded-[2.5rem] border-t-[8px] border-${theme.color}-500 shadow-sm`}>
-            <div className="flex items-center mb-10">
-              <div className={`w-14 h-14 bg-${theme.color}-100 rounded-2xl flex items-center justify-center text-${theme.color}-600 mr-5 shadow-inner`}>
-                {theme.icon}
+
+        {/* 表單內容區 */}
+        <div className={`space-y-8 ${!user ? 'opacity-40 pointer-events-none grayscale-[0.5]' : ''}`}>
+
+          {/* 定課模組 */}
+          {showModules.routine && (
+            <section className="bg-white p-7 rounded-[2.5rem] border-l-[10px] border-indigo-500 shadow-sm animate-in slide-in-from-top-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-black text-slate-800 flex items-center"><CheckCircle2 className="w-5 h-5 mr-3 text-indigo-500" /> 定課執行</h2>
               </div>
-              <h2 className="text-3xl font-black tracking-tight">{theme.title}</h2>
-            </div>
-
-            <div className="space-y-12">
-              {SUB_FIELDS.map(field => (
-                <div key={field.id}>
-                  <div className="flex justify-between items-center mb-4">
-                    <span className={`flex items-center text-${theme.color}-600 font-black text-sm uppercase tracking-tight`}>
-                      {React.cloneElement(field.icon, { className: 'mr-2 w-4 h-4' })}
-                      ｜ {field.title} ｜
-                    </span>
-                    <span className="text-[10px] font-black text-slate-300 tracking-widest uppercase">{field.label}</span>
-                  </div>
-                  <div className="space-y-4">
-                    <input
-                      type="text"
-                      placeholder="＋ 正向覺察"
-                      value={formData[`${theme.id}_${field.id}_plus`] || ''}
-                      onChange={e => handleInputChange(`${theme.id}_${field.id}_plus`, e.target.value)}
-                      className={`w-full p-5 bg-${theme.color}-50/30 rounded-2xl outline-none text-sm border-2 border-transparent focus:border-${theme.color}-100`}
-                    />
-                    <input
-                      type="text"
-                      placeholder="－ 負向覺察"
-                      value={formData[`${theme.id}_${field.id}_minus`] || ''}
-                      onChange={e => handleInputChange(`${theme.id}_${field.id}_minus`, e.target.value)}
-                      className="w-full p-5 bg-rose-50/30 rounded-2xl outline-none text-sm border-2 border-transparent focus:border-rose-100"
-                    />
-                    {formData[`${theme.id}_${field.id}_minus`] && (
-                      <div className="pl-4 border-l-4 border-blue-400 animate-in slide-in-from-left duration-300 mt-2">
-                        <input
-                          type="text"
-                          placeholder="🎯 明日的調整方案"
-                          value={formData[`${theme.id}_${field.id}_todo`] || ''}
-                          onChange={e => handleInputChange(`${theme.id}_${field.id}_todo`, e.target.value)}
-                          className="w-full p-5 bg-sky-50 rounded-2xl outline-none text-sm font-bold text-sky-800 border border-sky-100 shadow-sm"
-                        />
-                      </div>
-                    )}
-                  </div>
+              <div className="space-y-6">
+                <div className="group">
+                  <label className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 block px-1">破曉打陰陽拳</label>
+                  <textarea
+                    value={formData.routine_boxing || ''}
+                    onChange={e => handleInputChange('routine_boxing', e.target.value)}
+                    className="w-full p-4 bg-slate-50 rounded-2xl outline-none text-base focus:ring-2 focus:ring-indigo-100 transition-all min-h-[100px]"
+                    placeholder="今日身心的流動..."
+                  />
+                  <label className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-2 block px-1 mt-6">欣賞老婆的閃光點</label>
+                  <textarea
+                    value={formData.routine_wife || ''}
+                    onChange={e => handleInputChange('routine_wife', e.target.value)}
+                    className="w-full p-4 bg-slate-50 rounded-2xl outline-none text-base focus:ring-2 focus:ring-indigo-100 transition-all min-h-[100px]"
+                    placeholder="感恩她的一切..."
+                  />
                 </div>
-              ))}
-            </div>
-          </section>
-        ))}
+              </div>
+            </section>
+          )}
 
+          {/* 感恩模組 */}
+          {showModules.gratitude && (
+            <section className="bg-white p-7 rounded-[2.5rem] border-l-[10px] border-pink-500 shadow-sm animate-in slide-in-from-top-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-black text-slate-800 flex items-center"><Heart className="w-5 h-5 mr-3 text-pink-500" /> 五感恩</h2>
+              </div>
+              <div className="space-y-4">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i}>
+                    <input
+                      type="text"
+                      placeholder={`${i}. 我感恩...`}
+                      value={formData[`gratitude_${i}`] || ''}
+                      onChange={e => handleInputChange(`gratitude_${i}`, e.target.value)}
+                      className="w-full p-4 bg-pink-50/50 rounded-2xl outline-none text-sm border-2 border-transparent focus:border-pink-200 transition-all placeholder:text-pink-300"
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
+          {/* 身語意主題區塊 */}
+          {THEMES.map(theme => (
+            <section key={theme.id} className={`bg-white p-7 rounded-[3rem] border-t-[10px] border-${theme.color === 'emerald' ? 'emerald' : 'blue'}-500 shadow-sm`}>
+              <div className="flex items-center mb-8">
+                <div className={`w-12 h-12 bg-${theme.color === 'emerald' ? 'emerald' : 'blue'}-100 rounded-2xl flex items-center justify-center text-${theme.color === 'emerald' ? 'emerald' : 'blue'}-600 mr-4 shadow-inner`}>
+                  {theme.icon}
+                </div>
+                <h2 className="text-2xl font-black tracking-tighter text-slate-800">{theme.title}</h2>
+              </div>
 
-        {/* Spacer for fixed footer */}
-        <div className="h-48" />
-      </form>
+              <div className="space-y-12">
+                {SUB_FIELDS.map(field => (
+                  <div key={field.id} className="space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-50 pb-2 px-1">
+                      <span className={`flex items-center text-${theme.color === 'emerald' ? 'emerald' : 'blue'}-600 font-black text-xs uppercase tracking-widest`}>
+                        {React.cloneElement(field.icon as React.ReactElement<any>, { className: 'mr-2.5 w-4 h-4' })}
+                        {field.title}
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-200 uppercase tracking-tighter">{field.label}</span>
+                    </div>
+                    <div className="space-y-3">
+                      <input
+                        type="text"
+                        placeholder="＋ 正向覺察"
+                        value={formData[`${theme.id}_${field.id}_plus`] || ''}
+                        onChange={e => handleInputChange(`${theme.id}_${field.id}_plus`, e.target.value)}
+                        className={`w-full p-5 bg-${theme.color === 'emerald' ? 'emerald' : 'blue'}-50/30 rounded-2xl outline-none text-base border-2 border-transparent focus:border-${theme.color === 'emerald' ? 'emerald' : 'blue'}-100 transition-all placeholder:text-slate-300`}
+                      />
+                      <input
+                        type="text"
+                        placeholder="－ 負向覺察"
+                        value={formData[`${theme.id}_${field.id}_minus`] || ''}
+                        onChange={e => handleInputChange(`${theme.id}_${field.id}_minus`, e.target.value)}
+                        className="w-full p-5 bg-rose-50/40 rounded-2xl outline-none text-base border-2 border-transparent focus:border-rose-100 transition-all placeholder:text-rose-200"
+                      />
+                      {formData[`${theme.id}_${field.id}_minus`] && (
+                        <div className="pl-4 border-l-4 border-sky-400 animate-in slide-in-from-left duration-500 mt-2">
+                          <input
+                            type="text"
+                            placeholder="🎯 明日的對治方案"
+                            value={formData[`${theme.id}_${field.id}_todo`] || ''}
+                            onChange={e => handleInputChange(`${theme.id}_${field.id}_todo`, e.target.value)}
+                            className="w-full p-5 bg-sky-50 rounded-2xl outline-none text-sm font-bold text-sky-900 border border-sky-100 shadow-sm"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </main>
 
-      {/* 底部按鈕 */}
-      <footer className="fixed bottom-0 left-0 w-full p-6 bg-white/70 backdrop-blur-2xl border-t z-50 flex justify-center">
-        <div className="flex gap-4 w-full max-w-md">
+      {/* 底部固定操作列：符合手機單手操作 */}
+      <footer className="fixed bottom-0 left-0 w-full p-5 bg-white/80 backdrop-blur-2xl border-t border-slate-100 z-50 pb-safe">
+        <div className="max-w-md mx-auto flex gap-4">
           <button
             type="button"
-            onClick={() => {/* 複製邏輯 */ }}
-            className="p-5 bg-slate-100 text-slate-500 rounded-3xl hover:bg-slate-200 active:scale-90 transition-all"
+            onClick={() => {/* 複製邏輯 */ alert('功能開發中') }}
+            className="p-5 bg-slate-50 text-slate-400 rounded-[1.75rem] active:bg-indigo-50 active:text-indigo-600 transition-all shadow-sm border border-slate-100"
           >
             <Copy className="w-6 h-6" />
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="flex-1 bg-slate-900 text-white font-black py-5 rounded-3xl shadow-2xl hover:bg-black transition-all active:scale-95 flex items-center justify-center space-x-2"
+            className="flex-1 bg-slate-900 text-white font-black py-5 rounded-[1.75rem] shadow-2xl shadow-slate-200 active:scale-95 transition-all flex items-center justify-center space-x-3 tracking-[0.2em]"
           >
             <Save className="w-6 h-6" />
-            <span className="tracking-[0.2em]">儲存觀心書</span>
+            <span>儲存觀心書</span>
           </button>
         </div>
       </footer>
-
-      {/* Settings Modal removed */}
     </div>
   );
 }
