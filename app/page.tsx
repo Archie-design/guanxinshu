@@ -21,10 +21,12 @@ import {
   Database,
   Info,
   Check,
-  CheckSquare
+  CheckSquare,
+  LayoutDashboard
 } from 'lucide-react';
+import Link from 'next/link';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/utils/supabase/client';
 
 // --- 常數定義 ---
 const QUOTES = [
@@ -48,10 +50,7 @@ const SUB_FIELDS = [
 
 export default function Guanxinshu() {
   // --- 狀態管理 ---
-  const [supabase] = useState(() => createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ));
+  const [supabase] = useState(() => createClient());
   const [user, setUser] = useState<any>(null);
   const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
   const [formData, setFormData] = useState<any>({});
@@ -296,72 +295,81 @@ export default function Guanxinshu() {
         </div>
         <div className="flex items-center space-x-2 flex-shrink-0">
           {user && (
-            <div className="flex items-center bg-slate-50 rounded-full pl-3 pr-1 py-1 border border-slate-100 shadow-sm max-w-[140px] xs:max-w-none">
-              <span className="text-[10px] font-bold text-slate-500 mr-2 truncate">
-                {user.email?.split('@')[0] || 'User'}
-              </span>
-              <button onClick={handleLogout} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-rose-500 shadow-sm transition-colors border border-slate-50 flex-shrink-0">
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <>
+              <div className="flex items-center bg-slate-50 rounded-full pl-3 pr-1 py-1 border border-slate-100 shadow-sm max-w-[140px] xs:max-w-none">
+                <span className="text-[10px] font-bold text-slate-500 mr-2 truncate">
+                  {user.email?.split('@')[0] || 'User'}
+                </span>
+                <button onClick={handleLogout} className="p-1.5 bg-white rounded-full text-slate-400 hover:text-rose-500 shadow-sm transition-colors border border-slate-50 flex-shrink-0">
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <Link href="/admin" className="p-2 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 transition-colors shadow-sm border border-indigo-100">
+                <LayoutDashboard className="w-4 h-4" />
+              </Link>
+            </>
           )}
         </div>
-      </header>
+      </header >
 
       {/* 內容主區塊 */}
-      <main className="px-5 pt-6 space-y-6">
+      < main className="px-5 pt-6 space-y-6" >
 
         {/* 登入引導 (若未登入) - 改置於最上方 */}
-        {!user && (
-          <div className="bg-indigo-50 border-2 border-indigo-100 border-dashed rounded-[2.5rem] p-8 text-center animate-in fade-in duration-700">
-            <UserIcon className="w-10 h-10 text-indigo-300 mx-auto mb-4" />
-            <h4 className="font-black text-indigo-900 mb-2">同步您的覺察紀錄</h4>
-            <p className="text-indigo-600/70 text-xs mb-6 px-4">完成設定並登入 Google，即可在不同裝置間同步您的觀心紀錄。</p>
-            <button
-              onClick={handleGoogleLogin}
-              className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center active:scale-95 transition-all"
-            >
-              <img src="https://www.google.com/favicon.ico" className="w-4 h-4 mr-3" alt="Google" />
-              使用 Google 帳號登入
-            </button>
-          </div>
-        )}
+        {
+          !user && (
+            <div className="bg-indigo-50 border-2 border-indigo-100 border-dashed rounded-[2.5rem] p-8 text-center animate-in fade-in duration-700">
+              <UserIcon className="w-10 h-10 text-indigo-300 mx-auto mb-4" />
+              <h4 className="font-black text-indigo-900 mb-2">同步您的覺察紀錄</h4>
+              <p className="text-indigo-600/70 text-xs mb-6 px-4">完成設定並登入 Google，即可在不同裝置間同步您的觀心紀錄。</p>
+              <button
+                onClick={handleGoogleLogin}
+                className="w-full bg-white text-slate-800 font-bold py-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center active:scale-95 transition-all"
+              >
+                <img src="https://www.google.com/favicon.ico" className="w-4 h-4 mr-3" alt="Google" />
+                使用 Google 帳號登入
+              </button>
+            </div>
+          )
+        }
 
         {/* 視覺吸引力：格言卡片 */}
-        {pendingTodos.length > 0 && (
-          <div className="bg-amber-50 border-l-4 border-amber-400 p-6 rounded-2xl shadow-sm animate-in slide-in-from-top-2">
-            <div className="flex items-center mb-4">
-              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
-                <CheckSquare className="w-5 h-5 text-amber-600" />
+        {
+          pendingTodos.length > 0 && (
+            <div className="bg-amber-50 border-l-4 border-amber-400 p-6 rounded-2xl shadow-sm animate-in slide-in-from-top-2">
+              <div className="flex items-center mb-4">
+                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center mr-3">
+                  <CheckSquare className="w-5 h-5 text-amber-600" />
+                </div>
+                <h3 className="font-black text-amber-800 text-lg">待辦行動 ({pendingTodos.length})</h3>
               </div>
-              <h3 className="font-black text-amber-800 text-lg">待辦行動 ({pendingTodos.length})</h3>
+              <div className="space-y-3">
+                {pendingTodos.map((todo) => (
+                  <label
+                    key={`${todo.date}-${todo.key}`}
+                    className={`flex items-start p-3 rounded-xl cursor-pointer transition-all group ${todo.done ? 'bg-slate-100/50 grayscale opacity-70' : 'bg-white/60 hover:bg-white'}`}
+                  >
+                    <div className="relative flex items-center mt-1 mr-3">
+                      <input
+                        type="checkbox"
+                        className="peer appearance-none w-5 h-5 border-2 border-amber-300 rounded-md checked:bg-amber-500 checked:border-amber-500 transition-all"
+                        checked={todo.done}
+                        onChange={() => handleTodoToggle(todo.date, todo.key, todo.done)}
+                      />
+                      <Check className="w-3.5 h-3.5 text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100 pointer-events-none" />
+                    </div>
+                    <div>
+                      <span className={`text-amber-900 font-bold block ${todo.done ? 'line-through text-slate-400' : ''}`}>{todo.content}</span>
+                      <span className="text-[10px] text-amber-600/60 font-medium bg-amber-100/50 px-2 py-0.5 rounded-full mt-1 inline-block">
+                        {todo.date}
+                      </span>
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
-            <div className="space-y-3">
-              {pendingTodos.map((todo) => (
-                <label
-                  key={`${todo.date}-${todo.key}`}
-                  className={`flex items-start p-3 rounded-xl cursor-pointer transition-all group ${todo.done ? 'bg-slate-100/50 grayscale opacity-70' : 'bg-white/60 hover:bg-white'}`}
-                >
-                  <div className="relative flex items-center mt-1 mr-3">
-                    <input
-                      type="checkbox"
-                      className="peer appearance-none w-5 h-5 border-2 border-amber-300 rounded-md checked:bg-amber-500 checked:border-amber-500 transition-all"
-                      checked={todo.done}
-                      onChange={() => handleTodoToggle(todo.date, todo.key, todo.done)}
-                    />
-                    <Check className="w-3.5 h-3.5 text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100 pointer-events-none" />
-                  </div>
-                  <div>
-                    <span className={`text-amber-900 font-bold block ${todo.done ? 'line-through text-slate-400' : ''}`}>{todo.content}</span>
-                    <span className="text-[10px] text-amber-600/60 font-medium bg-amber-100/50 px-2 py-0.5 rounded-full mt-1 inline-block">
-                      {todo.date}
-                    </span>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
+          )
+        }
 
         {/* 視覺吸引力：格言卡片 */}
         <div className="relative p-7 rounded-[2.5rem] bg-indigo-600 shadow-xl shadow-indigo-100 overflow-hidden group">
@@ -524,10 +532,10 @@ export default function Guanxinshu() {
             </section>
           ))}
         </div>
-      </main>
+      </main >
 
       {/* 底部固定操作列：符合手機單手操作 */}
-      <footer className="fixed bottom-0 left-0 w-full p-5 bg-white/80 backdrop-blur-2xl border-t border-slate-100 z-50 pb-safe">
+      < footer className="fixed bottom-0 left-0 w-full p-5 bg-white/80 backdrop-blur-2xl border-t border-slate-100 z-50 pb-safe" >
         <div className="max-w-md mx-auto flex gap-4">
           <button
             type="button"
@@ -545,7 +553,7 @@ export default function Guanxinshu() {
             <span>儲存觀心書</span>
           </button>
         </div>
-      </footer>
-    </div>
+      </footer >
+    </div >
   );
 }

@@ -6,18 +6,21 @@ import { revalidatePath } from 'next/cache';
 export async function getJournalEntry(date: string) {
     try {
         const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return null;
+
         const { data, error } = await supabase
             .from('logs')
             .select('content')
-            .eq('id', date) // ID is the date
+            .eq('id', date)
+            .eq('user_id', user.id)
             .single();
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 is JSON object not found (no rows)
+        if (error && error.code !== 'PGRST116') {
             console.error('Failed to fetch journal entry:', error);
             return null;
         }
 
-        // Return flatten content if exists
         return data?.content || null;
     } catch (error) {
         console.error('Failed to fetch journal entry:', error);
@@ -28,9 +31,13 @@ export async function getJournalEntry(date: string) {
 export async function getRecordedDates() {
     try {
         const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return [];
+
         const { data, error } = await supabase
             .from('logs')
-            .select('id');
+            .select('id')
+            .eq('user_id', user.id);
 
         if (error) {
             console.error('Failed to fetch recorded dates:', error);
@@ -88,12 +95,14 @@ const TODO_KEYS = [
 export async function getPendingTodos() {
     try {
         const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return [];
 
         // Fetch last 14 days of logs to look for pending todos
-        // Order by date desc so we see recent ones
         const { data, error } = await supabase
             .from('logs')
             .select('id, content')
+            .eq('user_id', user.id)
             .order('id', { ascending: false })
             .limit(14);
 
@@ -107,7 +116,6 @@ export async function getPendingTodos() {
         data.forEach((row: any) => {
             const content = row.content || {};
             TODO_KEYS.forEach(key => {
-                // If todo exists AND is not marked done
                 if (content[key] && !content[`${key}_done`]) {
                     pendingTodos.push({
                         date: row.id,
@@ -167,5 +175,169 @@ export async function toggleTodo(date: string, key: string, isDone: boolean) {
         return { success: true };
     } catch (error: any) {
         return { success: false, error: error.message };
+    }
+}
+
+export async function getJournalStats() {
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return null;
+
+        const { data, error } = await supabase
+            .from('logs')
+            .select('id')
+            .eq('user_id', user.id)
+            .order('id', { ascending: false });
+
+        if (error || !data) return null;
+
+        const dates = data.map(d => d.id).sort().reverse();
+        if (dates.length === 0) return { currentStreak: 0, longestStreak: 0, totalDays: 0 };
+
+        let currentStreak = 0;
+        let longestStreak = 0;
+        let tempStreak = 0;
+
+        const today = new Date().toISOString().split('T')[0];
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+        // Calc streaks
+        let lastDate = null;
+        const sortedDates = [...dates].reverse(); // Oldest to newest for streak
+
+        for (let i = 0; i < sortedDates.length; i++) {
+            const d = sortedDates[i];
+            if (!lastDate) {
+                tempStreak = 1;
+            } else {
+                const diff = (new Date(d).getTime() - new Date(lastDate).getTime()) / 86400000;
+                if (diff === 1) {
+                    tempStreak++;
+                } else {
+                    tempStreak = 1;
+                }
+            }
+            longestStreak = Math.max(longestStreak, tempStreak);
+            lastDate = d;
+        }
+
+        // Current streak from today or yesterday
+        if (dates[0] === today || dates[0] === yesterday) {
+            let streak = 0;
+            let checkDate = new Date(dates[0]);
+            let dateSet = new Set(dates);
+
+            while (dateSet.has(checkDate.toISOString().split('T')[0])) {
+                streak++;
+                checkDate.setDate(checkDate.getDate() - 1);
+            }
+            currentStreak = streak;
+        }
+
+        return {
+            currentStreak,
+            longestStreak,
+            totalDays: dates.length,
+            lastEntry: dates[0]
+        };
+    } catch (err) {
+        console.error(err);
+        return { currentStreak: 0, longestStreak: 0, totalDays: 0 };
+    }
+}
+
+export async function searchJournalEntries(query: string) {
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return [];
+
+        // Note: Supabase JSONB search can be tricky. We'll fetch and filter if query is small, 
+        // or use arrow operators if simple. But content is a flat-ish object of strings mostly.
+        const { data, error } = await supabase
+            .from('logs')
+            .select('id, content')
+            .eq('user_id', user.id)
+            .order('id', { ascending: false });
+
+        if (error || !data) return [];
+
+        const queryLower = query.toLowerCase();
+        const results = data.filter(row => {
+            if (!row.content || typeof row.content !== 'object') return false;
+            return Object.values(row.content).some(val =>
+                typeof val === 'string' && val.toLowerCase().includes(queryLower)
+            );
+        });
+
+        return results.map(r => ({
+            date: r.id,
+            preview: Object.values(r.content as object)
+                .filter(v => typeof v === 'string' && v.toLowerCase().includes(query.toLowerCase()))
+                .join(' | ')
+                .substring(0, 100) + '...'
+        }));
+    } catch (err) {
+        console.error(err);
+        return [];
+    }
+}
+
+export async function getMissingDates() {
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return [];
+
+        const { data, error } = await supabase
+            .from('logs')
+            .select('id')
+            .eq('user_id', user.id)
+            .order('id', { ascending: true });
+
+        if (error || !data || data.length === 0) return [];
+
+        const existingDates = new Set(data.map(d => d.id));
+        const firstDate = new Date(data[0].id);
+        const lastDate = new Date(); // Up to today
+        const missing = [];
+
+        let current = new Date(firstDate);
+        while (current <= lastDate) {
+            const dateStr = current.toISOString().split('T')[0];
+            if (!existingDates.has(dateStr)) {
+                missing.push(dateStr);
+            }
+            current.setDate(current.getDate() + 1);
+        }
+
+        if (missing.length === 0) return []; // Truly perfect
+
+        return missing.reverse().slice(0, 30);
+    } catch (err) {
+        return [];
+    }
+}
+
+export async function getDebugInfo() {
+    try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (!user) return { userId: 'Not Logged In', count: 0 };
+
+        const { count, error } = await supabase
+            .from('logs')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', user.id);
+
+        return {
+            userId: user.id,
+            count: count || 0,
+            error: error ? error.message : null
+        };
+    } catch (e: any) {
+        return { userId: 'Error', count: 0, error: e.message };
     }
 }
