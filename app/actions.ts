@@ -342,6 +342,77 @@ export async function getDebugInfo() {
     }
 }
 
+// ==== AI Report Saving & Retrieval ====
+
+export async function saveAiReport(title: string, report: string) {
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+            return { success: false, error: 'Unauthorized: 請先登入' };
+        }
+
+        const id = `ai_report_${Date.now()}`;
+        const content = {
+            type: 'ai_report',
+            title,
+            report,
+            createdAt: new Date().toISOString()
+        };
+
+        const { error } = await supabase
+            .from('logs')
+            .upsert({
+                id,
+                content,
+                user_id: user.id,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id, id' });
+
+        if (error) {
+            console.error('Save AI Report Error:', error);
+            return { success: false, error: error.message };
+        }
+
+        revalidatePath('/analysis');
+        return { success: true };
+    } catch (error: any) {
+        console.error('saveAiReport exception:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getSavedAiReports() {
+    try {
+        const supabase = await createClient();
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) return [];
+
+        const { data, error } = await supabase
+            .from('logs')
+            .select('id, content, updated_at')
+            .eq('user_id', user.id)
+            .like('id', 'ai_report_%')
+            .order('updated_at', { ascending: false });
+
+        if (error) {
+            console.error('Failed to fetch AI reports:', error);
+            return [];
+        }
+
+        return data.map((item: any) => ({
+            id: item.id,
+            title: item.content?.title || '未命名報告',
+            report: item.content?.report || '',
+            createdAt: item.content?.createdAt || item.updated_at
+        }));
+    } catch (error) {
+        console.error('getSavedAiReports exception:', error);
+        return [];
+    }
+}
+
 import { GoogleGenAI } from '@google/genai';
 
 export async function analyzePdfs(formData: FormData) {
