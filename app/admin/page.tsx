@@ -9,7 +9,8 @@ import {
     AlertCircle,
     ArrowLeft,
     TrendingUp,
-    ListFilter
+    ListFilter,
+    Sparkles
 } from 'lucide-react';
 import { getJournalStats, searchJournalEntries, getMissingDates, getDebugInfo } from '@/app/actions';
 import Link from 'next/link';
@@ -88,6 +89,23 @@ export default function AdminDashboard() {
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">總撰寫天數</span>
                         <span className="text-3xl font-black text-slate-800">{stats?.totalDays || 0} 天</span>
                     </div>
+                </section>
+
+                {/* AI 分析功能入口 */}
+                <section>
+                    <Link href="/analysis" className="group relative overflow-hidden bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 bg-[length:200%_auto] p-8 rounded-[2.5rem] shadow-lg shadow-indigo-500/20 flex flex-col sm:flex-row items-center justify-between transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-500/30 animate-[gradient_4s_linear_infinite]">
+                        <div className="absolute inset-0 bg-white/10 group-hover:bg-transparent transition-colors duration-500" />
+                        <div className="relative z-10 text-white mb-4 sm:mb-0">
+                            <h2 className="text-2xl font-black mb-2 flex items-center">
+                                <Sparkles className="w-6 h-6 mr-3 text-indigo-200" />
+                                AI 觀心綜合分析
+                            </h2>
+                            <p className="text-indigo-100 text-sm font-medium">上傳您過去的觀心書 PDF，讓 AI 為您淬鍊成長軌跡與模式</p>
+                        </div>
+                        <div className="relative z-10 w-full sm:w-auto text-center sm:text-left bg-white text-indigo-900 px-6 py-3 rounded-2xl font-black text-sm shadow-sm group-hover:scale-105 active:scale-95 transition-transform">
+                            立即分析 →
+                        </div>
+                    </Link>
                 </section>
 
                 {/* 關鍵字搜尋 */}

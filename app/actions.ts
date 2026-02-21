@@ -341,3 +341,56 @@ export async function getDebugInfo() {
         return { userId: 'Error', count: 0, error: e.message };
     }
 }
+
+import { GoogleGenAI } from '@google/genai';
+
+export async function analyzePdfs(formData: FormData) {
+    try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            return { success: false, error: 'GEMINI_API_KEY is not set' };
+        }
+
+        const files = formData.getAll('files') as File[];
+        if (!files || files.length === 0) {
+            return { success: false, error: '未提供檔案' };
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
+        const parts: Array<{ inlineData?: { data: string; mimeType: string }, text?: string }> = [];
+
+        // Convert files to base64
+        for (const file of files) {
+            const buffer = await file.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString('base64');
+            parts.push({
+                inlineData: {
+                    data: base64,
+                    mimeType: file.type || 'application/pdf',
+                }
+            });
+        }
+
+        const prompt = `
+你是一位專業的心理諮詢師與個人成長教練。請仔細閱讀並綜合分析使用者上傳的這些「觀心書（反思日記）」PDF 檔案。
+請提供一份深入、溫滿、具建設性的綜合分析報告，內容需要包含以下部分：
+1. **整體情緒與狀態總結**：總結這段時間內使用者的主要情緒波動、壓力來源以及成長亮點。
+2. **行為與思維模式分析**：點出使用者在這段期間常出現的思考慣性或行為模式（包含正向與需要調整的）。
+3. **具體建議與下一步**：基於你的分析，給予 3 點具體且可行的建議，幫助使用者在未來達到更穩定的身心狀態。
+
+請使用繁體中文，語氣要溫暖、同理、且充滿支持感。排版請使用 Markdown 格式（如標題、清單、粗體等）以利閱讀。
+`;
+        parts.push({ text: prompt });
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [{ role: 'user', parts: parts }]
+        });
+
+        return { success: true, report: response.text };
+
+    } catch (error: any) {
+        console.error('AI Analysis Action Error:', error);
+        return { success: false, error: error.message || '分析過程中發生錯誤' };
+    }
+}
